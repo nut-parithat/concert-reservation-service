@@ -28,20 +28,26 @@
 ## Project setup
 
 ```bash
-$ npm install
+# 1. Start PostgreSQL with Docker
+$ docker compose up -d
+
+# 2. Run the initial SQL script against the database initSql.sql
+
+# 3. Install dependencies
+$ pnpm install
 ```
 
 ## Compile and run the project
 
 ```bash
 # development
-$ npm run start
+$ pnpm run start
 
 # watch mode
-$ npm run start:dev
+$ pnpm run start:dev
 
 # production mode
-$ npm run start:prod
+$ pnpm run start:prod
 ```
 
 ## Run tests
