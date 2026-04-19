@@ -28,7 +28,7 @@
 ## Project setup
 
 ```bash
-# 1. Start PostgreSQL with Docker
+# 1. Start PostgreSQL, Redis with Docker
 $ docker compose up -d
 
 # 2. Run the initial SQL script against the database initSql.sql
