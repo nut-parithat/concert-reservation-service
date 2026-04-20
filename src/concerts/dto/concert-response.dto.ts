@@ -11,6 +11,10 @@ export class ConcertDto {
   createdAt: string;
 }
 
+export class ConcertWithReservationDto extends ConcertDto {
+  isReserved: boolean;
+}
+
 export class ReservationResponseDto {
   reservationId: string;
   concertId: string;

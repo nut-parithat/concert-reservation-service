@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { Concert } from './entities/concert.entity';
 
 @Injectable()
@@ -16,6 +16,16 @@ export class ConcertsRepository {
 
   findById(id: string): Promise<Concert | null> {
     return this.repo.findOne({ where: { id } });
+  }
+
+  findByIdWithLock(
+    id: string,
+    manager: EntityManager,
+  ): Promise<Concert | null> {
+    return manager.findOne(Concert, {
+      where: { id },
+      lock: { mode: 'pessimistic_write' },
+    });
   }
 
   create(data: Partial<Concert>): Promise<Concert> {

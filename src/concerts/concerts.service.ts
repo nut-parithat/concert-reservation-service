@@ -4,21 +4,28 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
+import { DataSource } from 'typeorm';
 import { ConcertsRepository } from './concerts.repository';
 import { ReservationsRepository } from '../reservations/reservations.repository';
 import { CreateConcertDto } from './dto/create-concert.dto';
-import { ConcertDto, ReservationResponseDto } from './dto/concert-response.dto';
+import {
+  ConcertDto,
+  ConcertWithReservationDto,
+  ReservationResponseDto,
+} from './dto/concert-response.dto';
 import { ConcertSummaryDto } from './dto/concert-summary.dto';
 import { Concert } from './entities/concert.entity';
 import {
   Reservation,
   ReservationStatus,
 } from '../reservations/entities/reservation.entity';
+
 @Injectable()
 export class ConcertsService {
   constructor(
     private readonly concertsRepository: ConcertsRepository,
     private readonly reservationsRepository: ReservationsRepository,
+    private readonly dataSource: DataSource,
   ) {}
 
   private toConcertDto(concert: Concert): ConcertDto {
@@ -47,6 +54,24 @@ export class ConcertsService {
   async getAll(): Promise<ConcertDto[]> {
     const concerts = await this.concertsRepository.findAll();
     return concerts.map((c) => this.toConcertDto(c));
+  }
+
+  async getAllForUser(userId: string): Promise<ConcertWithReservationDto[]> {
+    const [concerts, reservations] = await Promise.all([
+      this.concertsRepository.findAll(),
+      this.reservationsRepository.findAllByUser(userId),
+    ]);
+
+    const reservedConcertIds = new Set(
+      reservations
+        .filter((r) => r.status === ReservationStatus.RESERVED)
+        .map((r) => r.concertId),
+    );
+
+    return concerts.map((c) => ({
+      ...this.toConcertDto(c),
+      isReserved: reservedConcertIds.has(c.id),
+    }));
   }
 
   async getSummary(): Promise<ConcertSummaryDto> {
@@ -78,65 +103,72 @@ export class ConcertsService {
     concertId: string,
     userId: string,
   ): Promise<ReservationResponseDto> {
-    const concert = await this.concertsRepository.findById(concertId);
-    if (!concert) {
-      throw new NotFoundException('Concert not found');
-    }
+    return this.dataSource.transaction(async (manager) => {
+      const concert = await this.concertsRepository.findByIdWithLock(
+        concertId,
+        manager,
+      );
+      if (!concert) {
+        throw new NotFoundException('Concert not found');
+      }
 
-    const existing =
-      await this.reservationsRepository.findActiveByUserAndConcert(
+      const existing = await manager.findOne(Reservation, {
+        where: { userId, concertId, status: ReservationStatus.RESERVED },
+      });
+      if (existing) {
+        throw new BadRequestException('You have already reserved this concert');
+      }
+
+      const availableSeats = concert.totalSeats - concert.reservedSeat;
+      if (availableSeats <= 0) {
+        throw new BadRequestException('No seats available');
+      }
+
+      concert.reservedSeat += 1;
+      await manager.save(Concert, concert);
+
+      const reservation = manager.create(Reservation, {
         userId,
         concertId,
-      );
-    if (existing) {
-      throw new BadRequestException('You have already reserved this concert');
-    }
+        status: ReservationStatus.RESERVED,
+      });
+      const saved = await manager.save(Reservation, reservation);
 
-    const availableSeats = concert.totalSeats - concert.reservedSeat;
-    if (availableSeats <= 0) {
-      throw new BadRequestException('No seats available');
-    }
-
-    concert.reservedSeat += 1;
-    await this.concertsRepository.save(concert);
-
-    const reservation = await this.reservationsRepository.create({
-      userId,
-      concertId,
-      status: ReservationStatus.RESERVED,
+      return this.toReservationDto(saved);
     });
-
-    return this.toReservationDto(reservation);
   }
 
   async cancel(
     concertId: string,
     userId: string,
   ): Promise<ReservationResponseDto> {
-    const concert = await this.concertsRepository.findById(concertId);
-    if (!concert) {
-      throw new NotFoundException('Concert not found');
-    }
-
-    const reservation =
-      await this.reservationsRepository.findActiveByUserAndConcert(
-        userId,
+    return this.dataSource.transaction(async (manager) => {
+      const concert = await this.concertsRepository.findByIdWithLock(
         concertId,
+        manager,
       );
-    if (!reservation) {
-      throw new BadRequestException(
-        'No active reservation found for this concert',
-      );
-    }
+      if (!concert) {
+        throw new NotFoundException('Concert not found');
+      }
 
-    concert.reservedSeat = Math.max(0, concert.reservedSeat - 1);
-    concert.cancelledSeat += 1;
-    await this.concertsRepository.save(concert);
+      const reservation = await manager.findOne(Reservation, {
+        where: { userId, concertId, status: ReservationStatus.RESERVED },
+      });
+      if (!reservation) {
+        throw new BadRequestException(
+          'No active reservation found for this concert',
+        );
+      }
 
-    reservation.status = ReservationStatus.CANCELLED;
-    reservation.cancelledAt = new Date();
-    const updated = await this.reservationsRepository.save(reservation);
+      concert.reservedSeat = Math.max(0, concert.reservedSeat - 1);
+      concert.cancelledSeat += 1;
+      await manager.save(Concert, concert);
 
-    return this.toReservationDto(updated);
+      reservation.status = ReservationStatus.CANCELLED;
+      reservation.cancelledAt = new Date();
+      const updated = await manager.save(Reservation, reservation);
+
+      return this.toReservationDto(updated);
+    });
   }
 }

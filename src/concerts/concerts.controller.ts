@@ -25,8 +25,11 @@ export class ConcertsController {
   constructor(private readonly concertsService: ConcertsService) {}
 
   @Get()
-  getAll() {
-    return this.concertsService.getAll();
+  getAll(@Request() req: RequestWithUser) {
+    if (req.user.role === UserRole.ADMIN) {
+      return this.concertsService.getAll();
+    }
+    return this.concertsService.getAllForUser(req.user.id);
   }
 
   @Get('summary')
